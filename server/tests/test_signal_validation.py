@@ -21,9 +21,11 @@ FULL_SIGNALS = {
 }
 
 
-async def test_signal_validation_new_when_no_visitor_id(client):
+async def test_signal_validation_new_when_no_visitor_id(client, sk_auth_headers):
     """POST without visitorId should return signalValidation='new'."""
-    response = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    response = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -32,14 +34,17 @@ async def test_signal_validation_new_when_no_visitor_id(client):
     assert data["isNewVisitor"] is True
 
 
-async def test_signal_validation_match_when_signals_consistent(client):
+async def test_signal_validation_match_when_signals_consistent(client, sk_auth_headers):
     """POST with matching signals for an existing visitorId → 'match'."""
-    first = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    first = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
     visitor_id = first.json()["visitorId"]
 
     second = await client.post(
         "/identify",
         json={"signals": FULL_SIGNALS, "visitorId": visitor_id},
+        headers=sk_auth_headers,
     )
 
     data = second.json()
@@ -48,9 +53,11 @@ async def test_signal_validation_match_when_signals_consistent(client):
     assert data["isNewVisitor"] is False
 
 
-async def test_signal_validation_mismatch_when_signals_diverge(client):
+async def test_signal_validation_mismatch_when_signals_diverge(client, sk_auth_headers):
     """POST with different top signals for an existing visitorId → 'mismatch'."""
-    first = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    first = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
     visitor_id = first.json()["visitorId"]
 
     different_signals = {
@@ -63,6 +70,7 @@ async def test_signal_validation_mismatch_when_signals_diverge(client):
     second = await client.post(
         "/identify",
         json={"signals": different_signals, "visitorId": visitor_id},
+        headers=sk_auth_headers,
     )
 
     data = second.json()
@@ -70,9 +78,11 @@ async def test_signal_validation_mismatch_when_signals_diverge(client):
     assert data["visitorId"] == visitor_id
 
 
-async def test_fingerprint_id_is_returned(client):
+async def test_fingerprint_id_is_returned(client, sk_auth_headers):
     """Response should include a fingerprintId derived from top stable signals."""
-    response = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    response = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
 
     data = response.json()
     assert "fingerprintId" in data
@@ -80,19 +90,27 @@ async def test_fingerprint_id_is_returned(client):
     assert len(data["fingerprintId"]) > 3
 
 
-async def test_fingerprint_id_is_deterministic(client):
+async def test_fingerprint_id_is_deterministic(client, sk_auth_headers):
     """Same top signals should produce the same fingerprintId."""
-    first = await client.post("/identify", json={"signals": FULL_SIGNALS})
-    second = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    first = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
+    second = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
 
     assert first.json()["fingerprintId"] == second.json()["fingerprintId"]
 
 
-async def test_fingerprint_id_changes_with_different_signals(client):
+async def test_fingerprint_id_changes_with_different_signals(client, sk_auth_headers):
     """Different top signals should produce a different fingerprintId."""
-    first = await client.post("/identify", json={"signals": FULL_SIGNALS})
+    first = await client.post(
+        "/identify", json={"signals": FULL_SIGNALS}, headers=sk_auth_headers,
+    )
 
     different = {**FULL_SIGNALS, "canvas": "different_canvas"}
-    second = await client.post("/identify", json={"signals": different})
+    second = await client.post(
+        "/identify", json={"signals": different}, headers=sk_auth_headers,
+    )
 
     assert first.json()["fingerprintId"] != second.json()["fingerprintId"]

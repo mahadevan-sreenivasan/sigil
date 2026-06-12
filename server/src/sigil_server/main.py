@@ -3,15 +3,25 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
+import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .db import create_engine, run_migrations
-from .models import IdentifyRequest, IdentifyResponse
+from .models import (
+    AccountHistory,
+    CreateApiKeyRequest,
+    CreateApiKeyResponse,
+    IdentifyRequest,
+    IdentifyResponse,
+)
 
 TOP_STABLE_SIGNALS = ("canvas", "webglRenderer", "audioHash", "fonts")
 INDEXED_SIGNAL_MAP = {
@@ -70,13 +80,135 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
             await engine.dispose()
 
     app = FastAPI(title="Sigil Identification Server", lifespan=lifespan)
+    app.add_middleware(AuthMiddleware)
     _register_routes(app)
     return app
 
 
+_AUTH_EXEMPT_PATHS = {"/admin/api-keys", "/docs", "/openapi.json"}
+
+_rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(key_hash: str) -> bool:
+    """Return True if the request is within the rate limit, False if exceeded."""
+    rps = int(os.environ.get("SIGIL_RATE_LIMIT_RPS", "20"))
+    now = time.monotonic()
+    window = _rate_limit_buckets[key_hash]
+    cutoff = now - 1.0
+    _rate_limit_buckets[key_hash] = [t for t in window if t > cutoff]
+    if len(_rate_limit_buckets[key_hash]) >= rps:
+        return False
+    _rate_limit_buckets[key_hash].append(now)
+    return True
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in _AUTH_EXEMPT_PATHS:
+            return await call_next(request)
+
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return Response(
+                content='{"detail":"Missing or invalid Authorization header"}',
+                status_code=401,
+                media_type="application/json",
+            )
+
+        raw_key = auth_header[7:]
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        engine: AsyncEngine = request.app.state.engine
+
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT key_type, allowed_origins, revoked_at "
+                    "FROM api_keys WHERE key_hash = :h"
+                ),
+                {"h": key_hash},
+            )
+            key_row = row.first()
+
+        if key_row is None:
+            return Response(
+                content='{"detail":"Invalid API key"}',
+                status_code=401,
+                media_type="application/json",
+            )
+
+        key_type, allowed_origins_raw, revoked_at = key_row
+        if revoked_at is not None:
+            return Response(
+                content='{"detail":"API key has been revoked"}',
+                status_code=401,
+                media_type="application/json",
+            )
+
+        if key_type == "publishable" and request.url.path != "/identify":
+            return Response(
+                content='{"detail":"Publishable keys can only access POST /identify"}',
+                status_code=403,
+                media_type="application/json",
+            )
+
+        if key_type == "publishable" and request.url.path == "/identify":
+            origins = json.loads(allowed_origins_raw) if allowed_origins_raw else []
+            origin = request.headers.get("origin", "")
+            if origins and origin not in origins:
+                return Response(
+                    content='{"detail":"Origin not allowed"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
+
+            if not _check_rate_limit(key_hash):
+                return Response(
+                    content='{"detail":"Rate limit exceeded"}',
+                    status_code=429,
+                    media_type="application/json",
+                )
+
+        request.state.key_type = key_type
+        return await call_next(request)
+
+
+def _generate_raw_key(prefix: str) -> str:
+    return f"{prefix}{secrets.token_urlsafe(32)}"
+
+
 def _register_routes(app: FastAPI) -> None:
-    @app.post("/identify", response_model=IdentifyResponse)
-    async def identify(body: IdentifyRequest, request: Request) -> IdentifyResponse:
+    @app.post("/admin/api-keys", response_model=CreateApiKeyResponse)
+    async def create_api_key(
+        body: CreateApiKeyRequest, request: Request,
+    ) -> CreateApiKeyResponse:
+        engine: AsyncEngine = request.app.state.engine
+        pk_raw = _generate_raw_key("pk_live_")
+        sk_raw = _generate_raw_key("sk_live_")
+        pk_hash = hashlib.sha256(pk_raw.encode()).hexdigest()
+        sk_hash = hashlib.sha256(sk_raw.encode()).hexdigest()
+        origins_json = json.dumps(body.allowedOrigins)
+
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO api_keys (key_type, key_hash, key_prefix, allowed_origins) "
+                    "VALUES (:kt, :kh, :kp, :ao)"
+                ),
+                {"kt": "publishable", "kh": pk_hash, "kp": "pk_live_", "ao": origins_json},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO api_keys (key_type, key_hash, key_prefix, allowed_origins) "
+                    "VALUES (:kt, :kh, :kp, :ao)"
+                ),
+                {"kt": "secret", "kh": sk_hash, "kp": "sk_live_", "ao": origins_json},
+            )
+
+        return CreateApiKeyResponse(publishableKey=pk_raw, secretKey=sk_raw)
+
+    @app.post("/identify")
+    async def identify(body: IdentifyRequest, request: Request):
         engine: AsyncEngine = request.app.state.engine
         visitor_id = body.visitorId
         is_new = True
@@ -148,13 +280,25 @@ def _register_routes(app: FastAPI) -> None:
                 },
             )
 
-        return IdentifyResponse(
+        key_type = getattr(request.state, "key_type", None)
+        result = IdentifyResponse(
             visitorId=visitor_id,
             fingerprintId=fingerprint_id,
             isNewVisitor=is_new,
             signalValidation=signal_validation,
             serverReachable=True,
+            similarVisitors=[],
+            accountHistory=AccountHistory(),
         )
+
+        if key_type == "publishable":
+            data = result.model_dump()
+            data.pop("accountHistory", None)
+            for sv in data.get("similarVisitors", []):
+                sv.pop("accountIds", None)
+            return data
+
+        return result
 
 
 app = create_app()
