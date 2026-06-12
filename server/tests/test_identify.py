@@ -4,7 +4,6 @@ import pytest
 from sqlalchemy import text
 
 
-@pytest.mark.asyncio
 async def test_new_visitor_gets_vis_prefixed_id(client):
     response = await client.post("/identify", json={
         "signals": {"canvas": "abc123hash"},
@@ -15,9 +14,10 @@ async def test_new_visitor_gets_vis_prefixed_id(client):
     assert data["visitorId"].startswith("vis_")
     assert data["isNewVisitor"] is True
     assert data["serverReachable"] is True
+    assert data["signalValidation"] == "new"
+    assert data["fingerprintId"].startswith("fp_")
 
 
-@pytest.mark.asyncio
 async def test_returning_visitor_is_not_new_and_appends_signal_set(client, engine):
     first = await client.post("/identify", json={
         "signals": {"canvas": "hash_v1"},

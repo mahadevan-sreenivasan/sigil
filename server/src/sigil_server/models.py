@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -11,5 +13,7 @@ class IdentifyRequest(BaseModel):
 
 class IdentifyResponse(BaseModel):
     visitorId: str
+    fingerprintId: str
     isNewVisitor: bool
+    signalValidation: Literal["new", "match", "mismatch"]
     serverReachable: bool

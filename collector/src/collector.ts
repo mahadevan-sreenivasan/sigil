@@ -1,4 +1,18 @@
 import { collectCanvasHash } from './signals/canvas';
+import { collectWebGL } from './signals/webgl';
+import { collectAudioHash } from './signals/audio';
+import { collectFontHash } from './signals/fonts';
+import {
+  collectScreenResolution,
+  collectColorDepth,
+  collectPlatform,
+  collectHardwareConcurrency,
+  collectDeviceMemory,
+  collectTouchSupport,
+  collectMaxTouchPoints,
+  collectTimezone,
+  collectUserAgent,
+} from './signals/simple';
 
 export interface SigilCollectorOptions {
   apiKey: string;
@@ -8,11 +22,14 @@ export interface SigilCollectorOptions {
 
 export interface IdentifyOptions {
   accountId?: string;
+  visitorId?: string;
 }
 
 export interface IdentificationResult {
   visitorId: string | null;
+  fingerprintId: string | null;
   isNewVisitor: boolean | null;
+  signalValidation: 'new' | 'match' | 'mismatch' | null;
   serverReachable: boolean;
 }
 
@@ -30,10 +47,34 @@ export class SigilCollector {
   }
 
   async identify(options?: IdentifyOptions): Promise<IdentificationResult> {
-    const canvas = await collectCanvasHash();
-    const signals = { canvas };
+    const [canvas, webgl, audioHash, fonts] = await Promise.all([
+      collectCanvasHash(),
+      Promise.resolve(collectWebGL()),
+      collectAudioHash(),
+      collectFontHash(),
+    ]);
+
+    const signals: Record<string, unknown> = {
+      canvas,
+      webglRenderer: webgl?.renderer ?? null,
+      webglVendor: webgl?.vendor ?? null,
+      audioHash,
+      fonts,
+      screenResolution: collectScreenResolution(),
+      colorDepth: collectColorDepth(),
+      platform: collectPlatform(),
+      hardwareConcurrency: collectHardwareConcurrency(),
+      deviceMemory: collectDeviceMemory(),
+      touchSupport: collectTouchSupport(),
+      maxTouchPoints: collectMaxTouchPoints(),
+      timezone: collectTimezone(),
+      userAgent: collectUserAgent(),
+    };
 
     const body: Record<string, unknown> = { signals };
+    if (options?.visitorId) {
+      body.visitorId = options.visitorId;
+    }
     if (options?.accountId) {
       body.accountId = options.accountId;
     }
@@ -55,7 +96,9 @@ export class SigilCollector {
       const data = await response.json();
       return {
         visitorId: data.visitorId ?? null,
+        fingerprintId: data.fingerprintId ?? null,
         isNewVisitor: data.isNewVisitor ?? null,
+        signalValidation: data.signalValidation ?? null,
         serverReachable: true,
       };
     } finally {
