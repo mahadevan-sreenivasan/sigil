@@ -1,0 +1,39 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://sigil:sigil@postgres:5432/sigil
+      MAXMIND_DB_PATH: /data/GeoLite2-City.mmdb
+      SIGIL_CONFIG_PATH: /app/sigil-config.yaml
+      SIGIL_RATE_LIMIT_RPS: "20"
+    volumes:
+      - ./data/GeoLite2-City.mmdb:/data/GeoLite2-City.mmdb:ro
+      - ./sigil-config.yaml:/app/sigil-config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sigil
+      POSTGRES_PASSWORD: sigil
+      POSTGRES_DB: sigil
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sigil"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -25,6 +25,7 @@ from .models import (
     IdentifyResponse,
     Velocity,
 )
+from .startup import validate_config, validate_env
 
 TOP_STABLE_SIGNALS = ("canvas", "webglRenderer", "audioHash", "fonts")
 INDEXED_SIGNAL_MAP = {
@@ -75,6 +76,8 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         nonlocal engine
         if engine is None:
+            validate_env()
+            validate_config(os.environ.get("SIGIL_CONFIG_PATH", "sigil-config.yaml"))
             engine = create_engine(os.environ["DATABASE_URL"])
             await run_migrations(engine)
         app.state.engine = engine
@@ -88,7 +91,7 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
     return app
 
 
-_AUTH_EXEMPT_PATHS = {"/admin/api-keys", "/docs", "/openapi.json"}
+_AUTH_EXEMPT_PATHS = {"/admin/api-keys", "/docs", "/openapi.json", "/health"}
 
 _rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
 
@@ -181,6 +184,12 @@ def _generate_raw_key(prefix: str) -> str:
 
 
 def _register_routes(app: FastAPI) -> None:
+    @app.get("/health")
+    async def health(request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "healthy"}
     @app.post("/admin/api-keys", response_model=CreateApiKeyResponse)
     async def create_api_key(
         body: CreateApiKeyRequest, request: Request,

@@ -12,6 +12,45 @@ A self-hosted browser fingerprint SDK for e-commerce fraud detection. Collects d
 
 ## Quick Start
 
+### Docker Compose (recommended)
+
+The fastest way to run a complete Sigil instance locally:
+
+```bash
+# 1. Obtain the MaxMind GeoLite2-City database (free, requires registration):
+#    https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+#    Place the .mmdb file at: data/GeoLite2-City.mmdb
+mkdir -p data
+
+# 2. Start the server and PostgreSQL
+docker compose up -d
+
+# 3. Verify it's running
+curl http://localhost:8080/health
+# → {"status": "healthy"}
+```
+
+The server will be available at `http://localhost:8080`.
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `postgresql://sigil:sigil@postgres:5432/sigil` | PostgreSQL connection string (required) |
+| `MAXMIND_DB_PATH` | `/data/GeoLite2-City.mmdb` | Path to MaxMind GeoLite2-City database |
+| `SIGIL_CONFIG_PATH` | `sigil-config.yaml` | Path to signal weights config file |
+| `SIGIL_RATE_LIMIT_RPS` | `20` | Requests per second per API key |
+
+#### MaxMind GeoLite2-City Database
+
+The geolocation feature requires a MaxMind GeoLite2-City database file:
+
+1. Create a free account at https://www.maxmind.com/en/geolite2/signup
+2. Download the GeoLite2-City database (`.mmdb` format)
+3. Place the file at `data/GeoLite2-City.mmdb` in the repo root
+
+> **Note:** The server starts without this file (a warning is logged), but geolocation features will be unavailable.
+
 ### Collector
 
 ```bash
