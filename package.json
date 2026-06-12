@@ -10,6 +10,7 @@
     "build:dashboard": "npm run build -w dashboard",
     "test:collector": "npm test -w collector",
     "build": "npm run build:collector && npm run build:dashboard",
+    "test:dashboard": "npm test -w dashboard",
     "test": "npm run test:collector"
   }
 }
