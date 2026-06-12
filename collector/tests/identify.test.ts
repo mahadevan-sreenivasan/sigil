@@ -90,6 +90,56 @@ describe('SigilCollector.identify', () => {
     expect(result.serverReachable).toBe(true);
   });
 
+  it('includes accountId in request body when provided', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          visitorId: 'vis_acct_test',
+          isNewVisitor: false,
+          fingerprintId: 'fp_xyz',
+          signalValidation: 'match',
+          serverReachable: true,
+        }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    await collector.identify({ accountId: 'cust_12345' });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.accountId).toBe('cust_12345');
+  });
+
+  it('omits accountId from request body when not provided', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          visitorId: 'vis_no_acct',
+          isNewVisitor: true,
+          fingerprintId: 'fp_abc',
+          signalValidation: 'new',
+          serverReachable: true,
+        }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    await collector.identify();
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.accountId).toBeUndefined();
+  });
+
   it('includes visitorId from localStorage when provided', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,

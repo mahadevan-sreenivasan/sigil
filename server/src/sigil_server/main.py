@@ -9,6 +9,8 @@ import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
@@ -280,6 +282,54 @@ def _register_routes(app: FastAPI) -> None:
                 },
             )
 
+            if body.accountId is not None:
+                existing = await conn.execute(
+                    text(
+                        "SELECT 1 FROM account_bindings "
+                        "WHERE visitor_id = :vid AND account_id = :aid"
+                    ),
+                    {"vid": visitor_id, "aid": body.accountId},
+                )
+                if existing.first() is None:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO account_bindings (visitor_id, account_id) "
+                            "VALUES (:vid, :aid)"
+                        ),
+                        {"vid": visitor_id, "aid": body.accountId},
+                    )
+                else:
+                    await conn.execute(
+                        text(
+                            "UPDATE account_bindings SET last_seen_at = CURRENT_TIMESTAMP "
+                            "WHERE visitor_id = :vid AND account_id = :aid"
+                        ),
+                        {"vid": visitor_id, "aid": body.accountId},
+                    )
+
+        account_history = AccountHistory()
+        if body.accountId is not None:
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    text(
+                        "SELECT status FROM account_bindings "
+                        "WHERE visitor_id = :vid AND account_id = :aid"
+                    ),
+                    {"vid": visitor_id, "aid": body.accountId},
+                )
+                binding = row.first()
+                if binding is not None:
+                    account_history.isKnownVisitorForAccount = binding[0] == "verified"
+
+                count_row = await conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM account_bindings "
+                        "WHERE account_id = :aid AND status = 'verified'"
+                    ),
+                    {"aid": body.accountId},
+                )
+                account_history.knownVisitorCount = count_row.scalar() or 0
+
         key_type = getattr(request.state, "key_type", None)
         result = IdentifyResponse(
             visitorId=visitor_id,
@@ -288,7 +338,7 @@ def _register_routes(app: FastAPI) -> None:
             signalValidation=signal_validation,
             serverReachable=True,
             similarVisitors=[],
-            accountHistory=AccountHistory(),
+            accountHistory=account_history,
         )
 
         if key_type == "publishable":
@@ -299,6 +349,76 @@ def _register_routes(app: FastAPI) -> None:
             return data
 
         return result
+
+    @app.post("/accounts/{account_id}/visitors/{visitor_id}/verify")
+    async def verify_binding(account_id: str, visitor_id: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT status FROM account_bindings "
+                    "WHERE visitor_id = :vid AND account_id = :aid"
+                ),
+                {"vid": visitor_id, "aid": account_id},
+            )
+            if row.first() is None:
+                return Response(
+                    content='{"detail":"Binding not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            now = datetime.now(timezone.utc).isoformat()
+            await conn.execute(
+                text(
+                    "UPDATE account_bindings "
+                    "SET status = 'verified', verified_at = :now "
+                    "WHERE visitor_id = :vid AND account_id = :aid"
+                ),
+                {"vid": visitor_id, "aid": account_id, "now": now},
+            )
+
+        return {
+            "accountId": account_id,
+            "visitorId": visitor_id,
+            "bindingStatus": "verified",
+            "verifiedAt": now,
+        }
+
+    @app.delete("/accounts/{account_id}/visitors/{visitor_id}/verify")
+    async def revoke_binding(account_id: str, visitor_id: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT status FROM account_bindings "
+                    "WHERE visitor_id = :vid AND account_id = :aid"
+                ),
+                {"vid": visitor_id, "aid": account_id},
+            )
+            if row.first() is None:
+                return Response(
+                    content='{"detail":"Binding not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            now = datetime.now(timezone.utc).isoformat()
+            await conn.execute(
+                text(
+                    "UPDATE account_bindings "
+                    "SET status = 'observed', verified_at = NULL "
+                    "WHERE visitor_id = :vid AND account_id = :aid"
+                ),
+                {"vid": visitor_id, "aid": account_id},
+            )
+
+        return {
+            "accountId": account_id,
+            "visitorId": visitor_id,
+            "bindingStatus": "observed",
+            "revokedAt": now,
+        }
 
 
 app = create_app()
