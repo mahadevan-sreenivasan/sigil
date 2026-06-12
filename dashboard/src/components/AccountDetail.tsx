@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { apiFetch } from '../api';
+import { GeoTimeline, type GeoEntry } from './GeoTimeline';
 
 interface Geolocation {
   country: string;
@@ -22,9 +23,16 @@ interface AccountData {
   visitors: AccountVisitor[];
 }
 
+interface GeolocationsResponse {
+  accountId: string;
+  geolocations: GeoEntry[];
+}
+
 export function AccountDetail() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<AccountData | null>(null);
+  const [geoEntries, setGeoEntries] = useState<GeoEntry[]>([]);
+  const [days, setDays] = useState(30);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,6 +41,17 @@ export function AccountDetail() {
       .then(setData)
       .catch((err) => setError(err.message));
   }, [id]);
+
+  const fetchGeolocations = useCallback(() => {
+    if (!id) return;
+    apiFetch<GeolocationsResponse>(`/accounts/${id}/geolocations?days=${days}`)
+      .then((resp) => setGeoEntries(resp.geolocations))
+      .catch(() => setGeoEntries([]));
+  }, [id, days]);
+
+  useEffect(() => {
+    fetchGeolocations();
+  }, [fetchGeolocations]);
 
   if (error) return <div className="error-message">Error: {error}</div>;
   if (!data) return <div className="loading">Loading…</div>;
@@ -77,6 +96,11 @@ export function AccountDetail() {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section>
+        <h3>Geolocation Timeline</h3>
+        <GeoTimeline entries={geoEntries} days={days} onDaysChange={setDays} />
       </section>
     </div>
   );
