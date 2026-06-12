@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from sigil_server.db import run_migrations
@@ -28,6 +28,11 @@ class MockGeoResolver:
 @pytest.fixture
 async def engine():
     e = create_async_engine("sqlite+aiosqlite:///:memory:")
+
+    @event.listens_for(e.sync_engine, "connect")
+    def _enable_fk(dbapi_conn, _record):
+        dbapi_conn.execute("PRAGMA foreign_keys = ON")
+
     await run_migrations(e)
     yield e
     await e.dispose()

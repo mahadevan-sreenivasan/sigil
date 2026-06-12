@@ -752,6 +752,54 @@ def _register_routes(app: FastAPI) -> None:
             "verifiedAt": now,
         }
 
+    @app.delete("/visitors/{visitor_id}")
+    async def delete_visitor(visitor_id: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text("SELECT visitor_id FROM visitors WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+            if row.first() is None:
+                return Response(
+                    content='{"detail":"Visitor not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            bindings_del = await conn.execute(
+                text("DELETE FROM account_bindings WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+            bindings_count = bindings_del.rowcount
+
+            geo_del = await conn.execute(
+                text("DELETE FROM geolocation_history WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+            geo_count = geo_del.rowcount
+
+            signal_count_row = await conn.execute(
+                text("SELECT COUNT(*) FROM signal_sets WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+            signal_count = signal_count_row.scalar() or 0
+
+            await conn.execute(
+                text("DELETE FROM visitors WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+
+        return {
+            "visitorId": visitor_id,
+            "deleted": True,
+            "recordsRemoved": {
+                "signalSets": signal_count,
+                "accountBindings": bindings_count,
+                "geolocations": geo_count,
+            },
+        }
+
     @app.delete("/accounts/{account_id}/visitors/{visitor_id}/verify")
     async def revoke_binding(account_id: str, visitor_id: str, request: Request):
         engine: AsyncEngine = request.app.state.engine
