@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, text
@@ -10,6 +8,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sigil_server.db import run_migrations
 from sigil_server.geolocation import GeoResult
 from sigil_server.main import _rate_limit_buckets
+
+ADMIN_TOKEN = "test-admin-token-that-is-long-enough-for-validation"
 
 MOCK_GEO_DB: dict[str, GeoResult] = {
     "1.2.3.4": GeoResult(country="IN", city="Mumbai", latitude=19.0760, longitude=72.8777),
@@ -45,6 +45,11 @@ def _clear_rate_limits():
     _rate_limit_buckets.clear()
 
 
+@pytest.fixture(autouse=True)
+def _set_admin_token(monkeypatch):
+    monkeypatch.setenv("SIGIL_ADMIN_TOKEN", ADMIN_TOKEN)
+
+
 @pytest.fixture
 async def client(engine):
     from sigil_server.main import create_app
@@ -60,9 +65,11 @@ async def client(engine):
 @pytest.fixture
 async def api_keys(client):
     """Create a key pair and return (publishable_key, secret_key)."""
-    resp = await client.post("/admin/api-keys", json={
-        "allowedOrigins": ["https://test.com"],
-    })
+    resp = await client.post(
+        "/admin/api-keys",
+        json={"allowedOrigins": ["https://test.com"]},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+    )
     data = resp.json()
     return data["publishableKey"], data["secretKey"]
 
