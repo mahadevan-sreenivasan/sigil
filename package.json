@@ -1,0 +1,15 @@
+{
+  "name": "sigil",
+  "private": true,
+  "workspaces": [
+    "collector",
+    "dashboard"
+  ],
+  "scripts": {
+    "build:collector": "npm run build -w collector",
+    "build:dashboard": "npm run build -w dashboard",
+    "test:collector": "npm test -w collector",
+    "build": "npm run build:collector && npm run build:dashboard",
+    "test": "npm run test:collector"
+  }
+}
