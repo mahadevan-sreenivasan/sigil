@@ -25,6 +25,12 @@ class AccountHistory(BaseModel):
     isKnownVisitorForAccount: bool = False
 
 
+class Velocity(BaseModel):
+    visitorRequestsLast10Min: int
+    accountDistinctVisitorsLast1Hr: int | None = None
+    ipDistinctAccountsLast1Hr: int | None = None
+
+
 class IdentifyResponse(BaseModel):
     visitorId: str
     fingerprintId: str
@@ -33,6 +39,7 @@ class IdentifyResponse(BaseModel):
     serverReachable: bool
     similarVisitors: list[SimilarVisitor] = []
     accountHistory: AccountHistory | None = None
+    velocity: Velocity | None = None
 
 
 class CreateApiKeyRequest(BaseModel):

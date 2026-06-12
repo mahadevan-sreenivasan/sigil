@@ -31,6 +31,11 @@ export interface IdentificationResult {
   isNewVisitor: boolean | null;
   signalValidation: 'new' | 'match' | 'mismatch' | null;
   serverReachable: boolean;
+  similarVisitors: unknown[] | null;
+  velocity: Record<string, unknown> | null;
+  geolocation: Record<string, unknown> | null;
+  impossibleTravel: Record<string, unknown> | null;
+  signals: Record<string, unknown> | null;
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -93,6 +98,10 @@ export class SigilCollector {
         signal: controller.signal,
       });
 
+      if (!response.ok) {
+        return this._degradedResult(signals);
+      }
+
       const data = await response.json();
       return {
         visitorId: data.visitorId ?? null,
@@ -100,9 +109,31 @@ export class SigilCollector {
         isNewVisitor: data.isNewVisitor ?? null,
         signalValidation: data.signalValidation ?? null,
         serverReachable: true,
+        similarVisitors: data.similarVisitors ?? null,
+        velocity: data.velocity ?? null,
+        geolocation: data.geolocation ?? null,
+        impossibleTravel: data.impossibleTravel ?? null,
+        signals,
       };
+    } catch {
+      return this._degradedResult(signals);
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private _degradedResult(signals: Record<string, unknown>): IdentificationResult {
+    return {
+      visitorId: null,
+      fingerprintId: null,
+      isNewVisitor: null,
+      signalValidation: null,
+      serverReachable: false,
+      similarVisitors: null,
+      velocity: null,
+      geolocation: null,
+      impossibleTravel: null,
+      signals,
+    };
   }
 }

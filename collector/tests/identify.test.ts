@@ -165,4 +165,103 @@ describe('SigilCollector.identify', () => {
     expect(body.visitorId).toBe('vis_existing');
     expect(result.signalValidation).toBe('match');
   });
+
+  it('returns degraded result on network error', async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    const result = await collector.identify();
+
+    expect(result.serverReachable).toBe(false);
+    expect(result.visitorId).toBeNull();
+    expect(result.fingerprintId).toBeNull();
+    expect(result.similarVisitors).toBeNull();
+    expect(result.velocity).toBeNull();
+    expect(result.geolocation).toBeNull();
+    expect(result.impossibleTravel).toBeNull();
+    expect(result.signals).toBeDefined();
+    expect(result.signals!.canvas).toBe('abc123canvas');
+  });
+
+  it('returns degraded result on timeout', async () => {
+    const mockFetch = vi.fn().mockImplementation(
+      (_url: string, opts: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          opts.signal.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted', 'AbortError')),
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+      timeout: 50,
+    });
+
+    const result = await collector.identify();
+
+    expect(result.serverReachable).toBe(false);
+    expect(result.visitorId).toBeNull();
+    expect(result.signals).toBeDefined();
+  });
+
+  it('returns degraded result on non-2xx response', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ detail: 'Internal Server Error' }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    const result = await collector.identify();
+
+    expect(result.serverReachable).toBe(false);
+    expect(result.visitorId).toBeNull();
+    expect(result.velocity).toBeNull();
+    expect(result.signals).toBeDefined();
+    expect(result.signals!.audioHash).toBe('audio_hash_abc');
+  });
+
+  it('degraded result includes all locally-computed signals', async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error('connection refused'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    const result = await collector.identify({ accountId: 'acct_999' });
+    const s = result.signals!;
+
+    expect(s.canvas).toBe('abc123canvas');
+    expect(s.webglRenderer).toBe('ANGLE (NVIDIA GeForce GTX 1080)');
+    expect(s.webglVendor).toBe('Google Inc. (NVIDIA)');
+    expect(s.audioHash).toBe('audio_hash_abc');
+    expect(s.fonts).toBe('font_hash_def');
+    expect(s.screenResolution).toBe('1920x1080');
+    expect(s.colorDepth).toBe(24);
+    expect(s.platform).toBe('Win32');
+    expect(s.hardwareConcurrency).toBe(8);
+    expect(s.deviceMemory).toBe(16);
+    expect(s.touchSupport).toBe(false);
+    expect(s.maxTouchPoints).toBe(0);
+    expect(s.timezone).toBe('Asia/Kolkata');
+    expect(s.userAgent).toBe('Mozilla/5.0 Test');
+
+    expect(result.isNewVisitor).toBeNull();
+    expect(result.signalValidation).toBeNull();
+  });
 });

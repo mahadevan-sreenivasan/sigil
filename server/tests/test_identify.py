@@ -47,3 +47,65 @@ async def test_returning_visitor_is_not_new_and_appends_signal_set(
             {"vid": visitor_id},
         )
         assert row.scalar() == 2
+
+
+async def test_velocity_visitor_requests_last_10_min(client, sk_auth_headers):
+    first = await client.post(
+        "/identify",
+        json={"signals": {"canvas": "vel_test"}},
+        headers=sk_auth_headers,
+    )
+    visitor_id = first.json()["visitorId"]
+
+    second = await client.post(
+        "/identify",
+        json={"signals": {"canvas": "vel_test"}, "visitorId": visitor_id},
+        headers=sk_auth_headers,
+    )
+    data = second.json()
+
+    assert data["velocity"]["visitorRequestsLast10Min"] == 2
+
+
+async def test_velocity_account_distinct_visitors_last_1hr(client, sk_auth_headers):
+    account_id = "acct_shared"
+
+    await client.post(
+        "/identify",
+        json={"signals": {"canvas": "dev_A"}, "accountId": account_id},
+        headers=sk_auth_headers,
+    )
+
+    resp = await client.post(
+        "/identify",
+        json={"signals": {"canvas": "dev_B"}, "accountId": account_id},
+        headers=sk_auth_headers,
+    )
+    data = resp.json()
+
+    assert data["velocity"]["accountDistinctVisitorsLast1Hr"] == 2
+
+
+async def test_velocity_null_when_no_account_id(client, sk_auth_headers):
+    resp = await client.post(
+        "/identify",
+        json={"signals": {"canvas": "no_acct"}},
+        headers=sk_auth_headers,
+    )
+    data = resp.json()
+
+    assert data["velocity"]["visitorRequestsLast10Min"] == 1
+    assert data["velocity"]["accountDistinctVisitorsLast1Hr"] is None
+    assert data["velocity"]["ipDistinctAccountsLast1Hr"] is None
+
+
+async def test_velocity_ip_distinct_accounts_is_null(client, sk_auth_headers):
+    """ipDistinctAccountsLast1Hr is null even with accountId (geolocation_history table not yet implemented)."""
+    resp = await client.post(
+        "/identify",
+        json={"signals": {"canvas": "ip_test"}, "accountId": "acct_ip"},
+        headers=sk_auth_headers,
+    )
+    data = resp.json()
+
+    assert data["velocity"]["ipDistinctAccountsLast1Hr"] is None

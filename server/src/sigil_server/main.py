@@ -9,7 +9,7 @@ import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,6 +23,7 @@ from .models import (
     CreateApiKeyResponse,
     IdentifyRequest,
     IdentifyResponse,
+    Velocity,
 )
 
 TOP_STABLE_SIGNALS = ("canvas", "webglRenderer", "audioHash", "fonts")
@@ -330,6 +331,37 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 account_history.knownVisitorCount = count_row.scalar() or 0
 
+        cutoff_10m = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM signal_sets "
+                    "WHERE visitor_id = :vid "
+                    "AND captured_at >= :cutoff"
+                ),
+                {"vid": visitor_id, "cutoff": cutoff_10m},
+            )
+            visitor_req_count = row.scalar() or 0
+
+        acct_distinct_visitors = None
+        if body.accountId is not None:
+            cutoff_1h = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    text(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM account_bindings "
+                        "WHERE account_id = :aid "
+                        "AND first_seen_at >= :cutoff"
+                    ),
+                    {"aid": body.accountId, "cutoff": cutoff_1h},
+                )
+                acct_distinct_visitors = row.scalar() or 0
+
+        velocity = Velocity(
+            visitorRequestsLast10Min=visitor_req_count,
+            accountDistinctVisitorsLast1Hr=acct_distinct_visitors,
+        )
+
         key_type = getattr(request.state, "key_type", None)
         result = IdentifyResponse(
             visitorId=visitor_id,
@@ -339,6 +371,7 @@ def _register_routes(app: FastAPI) -> None:
             serverReachable=True,
             similarVisitors=[],
             accountHistory=account_history,
+            velocity=velocity,
         )
 
         if key_type == "publishable":
