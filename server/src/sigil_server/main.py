@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -518,6 +518,204 @@ def _register_routes(app: FastAPI) -> None:
             return data
 
         return result
+
+    @app.get("/visitors/{visitor_id}")
+    async def get_visitor_detail(visitor_id: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text("SELECT visitor_id, first_seen_at, last_seen_at FROM visitors WHERE visitor_id = :vid"),
+                {"vid": visitor_id},
+            )
+            visitor = row.first()
+            if visitor is None:
+                return Response(
+                    content='{"detail":"Visitor not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            bindings_result = await conn.execute(
+                text(
+                    "SELECT account_id, status, first_seen_at, last_seen_at "
+                    "FROM account_bindings WHERE visitor_id = :vid"
+                ),
+                {"vid": visitor_id},
+            )
+            account_bindings = [
+                {
+                    "accountId": b[0],
+                    "status": b[1],
+                    "firstSeenAt": str(b[2]),
+                    "lastSeenAt": str(b[3]),
+                }
+                for b in bindings_result.fetchall()
+            ]
+
+            signal_result = await conn.execute(
+                text(
+                    "SELECT id, captured_at, canvas_hash, webgl_renderer, audio_hash, font_hash, signals_extra "
+                    "FROM signal_sets WHERE visitor_id = :vid "
+                    "ORDER BY captured_at DESC LIMIT 50"
+                ),
+                {"vid": visitor_id},
+            )
+            signal_rows = signal_result.fetchall()
+
+            geo_result = await conn.execute(
+                text(
+                    "SELECT ip_address, country, city "
+                    "FROM geolocation_history "
+                    "WHERE visitor_id = :vid ORDER BY captured_at DESC LIMIT 50"
+                ),
+                {"vid": visitor_id},
+            )
+            geo_rows = geo_result.fetchall()
+
+            recent_signal_sets = []
+            for idx, sr in enumerate(signal_rows):
+                ss_id, captured_at, canvas, webgl, audio, font, extra_raw = sr
+                signals = {}
+                if canvas:
+                    signals["canvas"] = canvas
+                if webgl:
+                    signals["webglRenderer"] = webgl
+                if audio:
+                    signals["audioHash"] = audio
+                if font:
+                    signals["fonts"] = font
+                extra = json.loads(extra_raw) if extra_raw else {}
+                signals.update(extra)
+
+                geolocation = None
+                if idx < len(geo_rows):
+                    g = geo_rows[idx]
+                    geolocation = {"ip": g[0], "country": g[1], "city": g[2]}
+
+                recent_signal_sets.append({
+                    "capturedAt": str(captured_at),
+                    "signals": signals,
+                    "geolocation": geolocation,
+                })
+
+        return {
+            "visitorId": visitor[0],
+            "firstSeenAt": str(visitor[1]),
+            "lastSeenAt": str(visitor[2]),
+            "accountBindings": account_bindings,
+            "recentSignalSets": recent_signal_sets,
+        }
+
+    @app.get("/accounts/{account_id}/visitors")
+    async def get_account_visitors(account_id: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.connect() as conn:
+            bindings = await conn.execute(
+                text(
+                    "SELECT ab.visitor_id, ab.status, ab.first_seen_at, ab.last_seen_at "
+                    "FROM account_bindings ab "
+                    "WHERE ab.account_id = :aid"
+                ),
+                {"aid": account_id},
+            )
+            rows = bindings.fetchall()
+
+            visitors = []
+            for row in rows:
+                vid, status, first_seen, last_seen = row
+
+                geo_row = await conn.execute(
+                    text(
+                        "SELECT country, city FROM geolocation_history "
+                        "WHERE visitor_id = :vid "
+                        "ORDER BY captured_at DESC LIMIT 1"
+                    ),
+                    {"vid": vid},
+                )
+                geo = geo_row.first()
+                last_geo = {"country": geo[0], "city": geo[1]} if geo else {"country": None, "city": None}
+
+                visitors.append({
+                    "visitorId": vid,
+                    "bindingStatus": status,
+                    "firstSeenAt": str(first_seen),
+                    "lastSeenAt": str(last_seen),
+                    "lastGeolocation": last_geo,
+                })
+
+        return {"accountId": account_id, "visitors": visitors}
+
+    @app.get("/accounts/{account_id}/geolocations")
+    async def get_account_geolocations(
+        account_id: str, request: Request, days: int = Query(default=30),
+    ):
+        engine: AsyncEngine = request.app.state.engine
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT visitor_id, ip_address, country, city, latitude, longitude, captured_at "
+                    "FROM geolocation_history "
+                    "WHERE account_id = :aid AND captured_at >= :cutoff "
+                    "ORDER BY captured_at DESC"
+                ),
+                {"aid": account_id, "cutoff": cutoff},
+            )
+            rows = result.fetchall()
+
+        geolocations = [
+            {
+                "visitorId": r[0],
+                "ip": r[1],
+                "country": r[2],
+                "city": r[3],
+                "latitude": r[4],
+                "longitude": r[5],
+                "capturedAt": str(r[6]),
+            }
+            for r in rows
+        ]
+        return {"accountId": account_id, "geolocations": geolocations}
+
+    @app.get("/ip/{ip_address:path}/visitors")
+    async def get_ip_visitors(ip_address: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT visitor_id, MIN(captured_at) as first_seen, "
+                    "MAX(captured_at) as last_seen, COUNT(*) as req_count "
+                    "FROM geolocation_history "
+                    "WHERE ip_address = :ip "
+                    "GROUP BY visitor_id"
+                ),
+                {"ip": ip_address},
+            )
+            rows = result.fetchall()
+
+            visitors = []
+            for row in rows:
+                vid, first_seen, last_seen, req_count = row
+
+                acct_result = await conn.execute(
+                    text(
+                        "SELECT DISTINCT account_id FROM geolocation_history "
+                        "WHERE visitor_id = :vid AND account_id IS NOT NULL"
+                    ),
+                    {"vid": vid},
+                )
+                account_ids = [a[0] for a in acct_result.fetchall()]
+
+                visitors.append({
+                    "visitorId": vid,
+                    "accountIds": account_ids,
+                    "firstSeenFromIp": str(first_seen),
+                    "lastSeenFromIp": str(last_seen),
+                    "requestCount": req_count,
+                })
+
+        return {"ip": ip_address, "visitors": visitors}
 
     @app.post("/accounts/{account_id}/visitors/{visitor_id}/verify")
     async def verify_binding(account_id: str, visitor_id: str, request: Request):
