@@ -55,3 +55,18 @@ def validate_config(config_path: str) -> None:
             f"Signal weights in {config_path} must sum to 1.0, got {total:.4f}. "
             f"Current weights: {weights}"
         )
+
+
+def load_weights(config_path: str) -> dict[str, float] | None:
+    """Load weight overrides from sigil-config.yaml if present. Returns None if no overrides."""
+    path = Path(config_path)
+    if not path.exists():
+        return None
+
+    with open(path) as f:
+        config = yaml.safe_load(f)
+
+    if config is None:
+        return None
+
+    return config.get("weights")

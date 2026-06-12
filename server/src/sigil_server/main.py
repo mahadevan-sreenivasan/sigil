@@ -23,9 +23,11 @@ from .models import (
     CreateApiKeyResponse,
     IdentifyRequest,
     IdentifyResponse,
+    SimilarVisitor,
     Velocity,
 )
-from .startup import validate_config, validate_env
+from .scoring import DEFAULT_WEIGHTS, find_similar_visitors
+from .startup import load_weights, validate_config, validate_env
 
 TOP_STABLE_SIGNALS = ("canvas", "webglRenderer", "audioHash", "fonts")
 INDEXED_SIGNAL_MAP = {
@@ -75,12 +77,15 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         nonlocal engine
+        config_path = os.environ.get("SIGIL_CONFIG_PATH", "sigil-config.yaml")
         if engine is None:
             validate_env()
-            validate_config(os.environ.get("SIGIL_CONFIG_PATH", "sigil-config.yaml"))
+            validate_config(config_path)
             engine = create_engine(os.environ["DATABASE_URL"])
             await run_migrations(engine)
         app.state.engine = engine
+        custom_weights = load_weights(config_path)
+        app.state.scoring_weights = custom_weights if custom_weights else DEFAULT_WEIGHTS
         yield
         if owns_engine and engine is not None:
             await engine.dispose()
@@ -371,6 +376,16 @@ def _register_routes(app: FastAPI) -> None:
             accountDistinctVisitorsLast1Hr=acct_distinct_visitors,
         )
 
+        sim_threshold = float(os.environ.get("SIGIL_SIMILARITY_THRESHOLD", "0.4"))
+        sim_max = int(os.environ.get("SIGIL_SIMILARITY_MAX_RESULTS", "10"))
+        weights = getattr(request.app.state, "scoring_weights", DEFAULT_WEIGHTS)
+
+        similar_raw = await find_similar_visitors(
+            engine, visitor_id, body.signals, weights,
+            threshold=sim_threshold, max_results=sim_max,
+        )
+        similar_visitors = [SimilarVisitor(**sv) for sv in similar_raw]
+
         key_type = getattr(request.state, "key_type", None)
         result = IdentifyResponse(
             visitorId=visitor_id,
@@ -378,7 +393,7 @@ def _register_routes(app: FastAPI) -> None:
             isNewVisitor=is_new,
             signalValidation=signal_validation,
             serverReachable=True,
-            similarVisitors=[],
+            similarVisitors=similar_visitors,
             accountHistory=account_history,
             velocity=velocity,
         )
