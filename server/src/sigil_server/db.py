@@ -24,6 +24,7 @@ def _adapt_for_sqlite(sql: str) -> str:
     sql = sql.replace("TIMESTAMPTZ", "TEXT")
     sql = sql.replace("BIGSERIAL", "INTEGER")
     sql = sql.replace("JSONB", "TEXT")
+    sql = re.sub(r"\bINET\b", "TEXT", sql)
     sql = re.sub(r"TEXT\[\]\s*DEFAULT\s*'\{\}'", "TEXT DEFAULT '[]'", sql)
     sql = re.sub(r"TEXT\[\]", "TEXT", sql)
     sql = re.sub(r"DEFAULT\s+NOW\(\)", "DEFAULT (datetime('now'))", sql, flags=re.IGNORECASE)

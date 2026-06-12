@@ -96,11 +96,11 @@ async def test_velocity_null_when_no_account_id(client, sk_auth_headers):
 
     assert data["velocity"]["visitorRequestsLast10Min"] == 1
     assert data["velocity"]["accountDistinctVisitorsLast1Hr"] is None
-    assert data["velocity"]["ipDistinctAccountsLast1Hr"] is None
+    assert data["velocity"]["ipDistinctAccountsLast1Hr"] == 0
 
 
-async def test_velocity_ip_distinct_accounts_is_null(client, sk_auth_headers):
-    """ipDistinctAccountsLast1Hr is null even with accountId (geolocation_history table not yet implemented)."""
+async def test_velocity_ip_distinct_accounts_wired_up(client, sk_auth_headers):
+    """ipDistinctAccountsLast1Hr counts distinct accounts from the same IP via geolocation_history."""
     resp = await client.post(
         "/identify",
         json={"signals": {"canvas": "ip_test"}, "accountId": "acct_ip"},
@@ -108,4 +108,4 @@ async def test_velocity_ip_distinct_accounts_is_null(client, sk_auth_headers):
     )
     data = resp.json()
 
-    assert data["velocity"]["ipDistinctAccountsLast1Hr"] is None
+    assert data["velocity"]["ipDistinctAccountsLast1Hr"] == 1

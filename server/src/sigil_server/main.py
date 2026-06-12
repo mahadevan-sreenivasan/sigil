@@ -17,12 +17,20 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .db import create_engine, run_migrations
+from .geolocation import (
+    GeoResolver,
+    check_impossible_travel,
+    extract_client_ip,
+)
 from .models import (
     AccountHistory,
     CreateApiKeyRequest,
     CreateApiKeyResponse,
+    Geolocation,
     IdentifyRequest,
     IdentifyResponse,
+    ImpossibleTravel,
+    PreviousLocation,
     SimilarVisitor,
     Velocity,
 )
@@ -236,6 +244,23 @@ def _register_routes(app: FastAPI) -> None:
         if visitor_id is None:
             visitor_id = f"vis_{uuid.uuid4().hex[:12]}"
 
+        # --- IP geolocation ---
+        client_ip = extract_client_ip(
+            {k.lower(): v for k, v in request.headers.items()},
+            request.client.host if request.client else None,
+        )
+
+        geo_resolver: GeoResolver | None = getattr(request.app.state, "geo_resolver", None)
+        geo_result = geo_resolver.resolve(client_ip) if geo_resolver else None
+
+        geolocation = Geolocation(
+            ip=client_ip,
+            country=geo_result.country if geo_result else None,
+            city=geo_result.city if geo_result else None,
+            latitude=geo_result.latitude if geo_result else None,
+            longitude=geo_result.longitude if geo_result else None,
+        )
+
         async with engine.begin() as conn:
             if body.visitorId is not None:
                 row = await conn.execute(
@@ -322,6 +347,76 @@ def _register_routes(app: FastAPI) -> None:
                         {"vid": visitor_id, "aid": body.accountId},
                     )
 
+            # --- Impossible travel: query previous record BEFORE inserting current ---
+            prev_geo_row = None
+            if body.accountId and geolocation.latitude is not None:
+                prev_result = await conn.execute(
+                    text(
+                        "SELECT latitude, longitude, country, city, captured_at "
+                        "FROM geolocation_history "
+                        "WHERE account_id = :aid "
+                        "ORDER BY captured_at DESC LIMIT 1"
+                    ),
+                    {"aid": body.accountId},
+                )
+                prev_geo_row = prev_result.first()
+
+            # --- Store geolocation ---
+            await conn.execute(
+                text(
+                    "INSERT INTO geolocation_history "
+                    "(visitor_id, account_id, ip_address, latitude, longitude, country, city) "
+                    "VALUES (:vid, :aid, :ip, :lat, :lon, :country, :city)"
+                ),
+                {
+                    "vid": visitor_id,
+                    "aid": body.accountId,
+                    "ip": client_ip,
+                    "lat": geolocation.latitude,
+                    "lon": geolocation.longitude,
+                    "country": geolocation.country,
+                    "city": geolocation.city,
+                },
+            )
+
+        # --- Compute impossible travel ---
+        impossible_travel = ImpossibleTravel()
+        if (
+            body.accountId
+            and prev_geo_row is not None
+            and prev_geo_row[0] is not None
+            and prev_geo_row[1] is not None
+            and geolocation.latitude is not None
+            and geolocation.longitude is not None
+        ):
+            prev_captured_at_str = str(prev_geo_row[4])
+            try:
+                prev_time = datetime.fromisoformat(prev_captured_at_str)
+            except ValueError:
+                prev_time = datetime.strptime(prev_captured_at_str, "%Y-%m-%d %H:%M:%S")
+            if prev_time.tzinfo is None:
+                prev_time = prev_time.replace(tzinfo=timezone.utc)
+
+            max_speed = float(os.environ.get("SIGIL_IMPOSSIBLE_TRAVEL_MAX_SPEED_KMH", "900"))
+            travel = check_impossible_travel(
+                geolocation.latitude, geolocation.longitude,
+                prev_geo_row[0], prev_geo_row[1],
+                prev_time=prev_time,
+                current_time=datetime.now(timezone.utc),
+                max_speed_kmh=max_speed,
+            )
+            impossible_travel = ImpossibleTravel(
+                detected=travel.detected,
+                previousLocation=PreviousLocation(
+                    country=prev_geo_row[2],
+                    city=prev_geo_row[3],
+                    latitude=prev_geo_row[0],
+                    longitude=prev_geo_row[1],
+                ),
+                previousSeenAt=prev_captured_at_str,
+                distanceKm=travel.distance_km,
+            )
+
         account_history = AccountHistory()
         if body.accountId is not None:
             async with engine.connect() as conn:
@@ -371,9 +466,24 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 acct_distinct_visitors = row.scalar() or 0
 
+        # --- IP velocity: distinct accounts from this IP in the last hour ---
+        cutoff_1h_ip = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT COUNT(DISTINCT account_id) FROM geolocation_history "
+                    "WHERE ip_address = :ip "
+                    "AND captured_at >= :cutoff "
+                    "AND account_id IS NOT NULL"
+                ),
+                {"ip": client_ip, "cutoff": cutoff_1h_ip},
+            )
+            ip_distinct_accounts = row.scalar() or 0
+
         velocity = Velocity(
             visitorRequestsLast10Min=visitor_req_count,
             accountDistinctVisitorsLast1Hr=acct_distinct_visitors,
+            ipDistinctAccountsLast1Hr=ip_distinct_accounts,
         )
 
         sim_threshold = float(os.environ.get("SIGIL_SIMILARITY_THRESHOLD", "0.4"))
@@ -393,6 +503,8 @@ def _register_routes(app: FastAPI) -> None:
             isNewVisitor=is_new,
             signalValidation=signal_validation,
             serverReachable=True,
+            geolocation=geolocation,
+            impossibleTravel=impossible_travel,
             similarVisitors=similar_visitors,
             accountHistory=account_history,
             velocity=velocity,

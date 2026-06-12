@@ -31,12 +31,36 @@ class Velocity(BaseModel):
     ipDistinctAccountsLast1Hr: int | None = None
 
 
+class Geolocation(BaseModel):
+    ip: str
+    country: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class PreviousLocation(BaseModel):
+    country: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class ImpossibleTravel(BaseModel):
+    detected: bool = False
+    previousLocation: PreviousLocation | None = None
+    previousSeenAt: str | None = None
+    distanceKm: float | None = None
+
+
 class IdentifyResponse(BaseModel):
     visitorId: str
     fingerprintId: str
     isNewVisitor: bool
     signalValidation: Literal["new", "match", "mismatch"]
     serverReachable: bool
+    geolocation: Geolocation | None = None
+    impossibleTravel: ImpossibleTravel | None = None
     similarVisitors: list[SimilarVisitor] = []
     accountHistory: AccountHistory | None = None
     velocity: Velocity | None = None
