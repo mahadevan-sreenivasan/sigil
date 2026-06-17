@@ -22,6 +22,21 @@ def validate_env() -> None:
             "Example: postgresql://user:pass@localhost:5432/sigil"
         )
 
+    admin_token = os.environ.get("SIGIL_ADMIN_TOKEN")
+    if not admin_token:
+        raise RuntimeError(
+            "SIGIL_ADMIN_TOKEN environment variable is required but not set. "
+            "Generate one with: openssl rand -base64 32  or  "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+
+    if len(admin_token) < 32:
+        raise RuntimeError(
+            f"SIGIL_ADMIN_TOKEN must be at least 32 characters (got {len(admin_token)}). "
+            "Generate one with: openssl rand -base64 32  or  "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+
     maxmind_path = os.environ.get("MAXMIND_DB_PATH")
     if not maxmind_path:
         logger.warning(

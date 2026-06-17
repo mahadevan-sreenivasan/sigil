@@ -47,10 +47,14 @@ The Collector and the integrator's backend both communicate with the Identificat
 ### 1. Start the Identification Server
 
 ```bash
+# Generate an admin token (minimum 32 characters)
+export SIGIL_ADMIN_TOKEN=$(openssl rand -base64 32)
+
 docker run -d \
   --name sigil-server \
   -p 8080:8080 \
   -e DATABASE_URL=postgresql://user:pass@host:5432/sigil \
+  -e SIGIL_ADMIN_TOKEN=$SIGIL_ADMIN_TOKEN \
   -e MAXMIND_DB_PATH=/data/GeoLite2-City.mmdb \
   sigil-server:latest
 ```
@@ -58,15 +62,19 @@ docker run -d \
 The server requires:
 - A PostgreSQL database (14+)
 - A MaxMind GeoLite2-City database file (download from https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
+- A `SIGIL_ADMIN_TOKEN` environment variable (minimum 32 characters) — the server refuses to start without it
 
 ### 2. Generate API Keys
 
 ```bash
-# Generate a publishable + secret key pair
+# Generate a publishable + secret key pair using the admin token
 curl -X POST http://localhost:8080/admin/api-keys \
-  -H "Authorization: Bearer <admin-token>" \
+  -H "Authorization: Bearer $SIGIL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"allowedOrigins": ["https://www.mystore.com"]}'
 ```
+
+> The `Authorization` header uses the admin token (`SIGIL_ADMIN_TOKEN`), not an API key. Admin endpoints are a separate privilege tier from publishable and secret keys.
 
 Response:
 ```json
@@ -147,18 +155,97 @@ Returns a `Promise<IdentificationResult>`.
 
 ### Authentication
 
-All requests must include an API key:
+All requests require a bearer token:
 
 ```
-Authorization: Bearer <key>
+Authorization: Bearer <token>
 ```
 
-- **Publishable key** (`pk_live_...`) — Only valid for `POST /identify`. Validated against registered allowed origins via CORS.
-- **Secret key** (`sk_live_...`) — Valid for all endpoints.
+Sigil uses a three-tier privilege model:
+
+| Tier | Credential | Scope |
+|------|------------|-------|
+| **Publishable** | `pk_live_...` key | `POST /identify` only. Validated against registered allowed origins via CORS. |
+| **Secret** | `sk_live_...` key | All data endpoints (identify, visitors, accounts, geolocations). |
+| **Admin** | `SIGIL_ADMIN_TOKEN` env var | `/admin/*` endpoints only (create, list, revoke API keys). |
+
+Admin endpoints require the admin token — not a publishable or secret API key. A leaked secret key cannot escalate to admin access.
 
 ### Rate Limiting
 
 The server enforces a default rate limit of **20 requests/second** per publishable key on the `POST /identify` endpoint. This is configurable via environment variable `SIGIL_RATE_LIMIT_RPS`.
+
+---
+
+### Admin API
+
+Admin endpoints manage API keys. All require the admin token (`SIGIL_ADMIN_TOKEN`) as a bearer token.
+
+#### `POST /admin/api-keys`
+
+Create a new publishable + secret key pair.
+
+**Request:**
+
+```json
+{
+  "allowedOrigins": ["https://www.mystore.com"]
+}
+```
+
+**Response:**
+
+```json
+{
+  "publishableKey": "pk_live_a7Bx3k...",
+  "secretKey": "sk_live_m9Yz2w..."
+}
+```
+
+Save both keys immediately — the full key values are never shown again. Each key is stored with a unique 14-character prefix (e.g. `pk_live_a7Bx3k`) for identification in the list and revoke endpoints.
+
+#### `GET /admin/api-keys`
+
+List all API keys with metadata. Never exposes the full key or hash.
+
+**Response:**
+
+```json
+[
+  {
+    "keyPrefix": "pk_live_a7Bx3k",
+    "keyType": "publishable",
+    "allowedOrigins": ["https://www.mystore.com"],
+    "createdAt": "2026-06-10T14:00:00Z",
+    "revokedAt": null
+  },
+  {
+    "keyPrefix": "sk_live_m9Yz2w",
+    "keyType": "secret",
+    "allowedOrigins": ["https://www.mystore.com"],
+    "createdAt": "2026-06-10T14:00:00Z",
+    "revokedAt": null
+  }
+]
+```
+
+#### `DELETE /admin/api-keys/{keyPrefix}`
+
+Revoke a specific API key by its unique prefix. Revoked keys immediately stop working for all endpoints.
+
+**Response:**
+
+```json
+{
+  "keyPrefix": "sk_live_m9Yz2w",
+  "keyType": "secret",
+  "allowedOrigins": ["https://www.mystore.com"],
+  "createdAt": "2026-06-10T14:00:00Z",
+  "revokedAt": "2026-06-12T09:30:00Z"
+}
+```
+
+Keys are independently revocable — revoking a secret key does not affect the publishable key created alongside it, and vice versa. Returns 404 if no key matches the prefix.
 
 ---
 
@@ -621,6 +708,7 @@ The Identification Server is configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | — | PostgreSQL connection string (required) |
+| `SIGIL_ADMIN_TOKEN` | — | Pre-shared admin token for `/admin/*` endpoints (required, minimum 32 characters) |
 | `MAXMIND_DB_PATH` | — | Path to GeoLite2-City.mmdb file (required) |
 | `SIGIL_RATE_LIMIT_RPS` | `20` | Max requests/second per publishable key |
 | `SIGIL_RETENTION_DAYS` | `180` | Days to retain signal sets and geolocation history |
@@ -737,6 +825,9 @@ CREATE TABLE api_keys (
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
+| `/admin/api-keys` | POST | Admin token | Create a publishable + secret key pair |
+| `/admin/api-keys` | GET | Admin token | List all API keys with metadata |
+| `/admin/api-keys/{keyPrefix}` | DELETE | Admin token | Revoke a specific API key |
 | `/identify` | POST | Publishable or Secret | Submit signals, get identification result |
 | `/visitors/{visitorId}` | GET | Secret | Get visitor detail with signal history |
 | `/accounts/{accountId}/visitors` | GET | Secret | List all devices for an account |

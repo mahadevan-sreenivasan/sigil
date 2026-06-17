@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -104,7 +105,7 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
     return app
 
 
-_AUTH_EXEMPT_PATHS = {"/admin/api-keys", "/docs", "/openapi.json", "/health"}
+_AUTH_EXEMPT_PATHS = {"/docs", "/openapi.json", "/health"}
 
 _rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
 
@@ -136,6 +137,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         raw_key = auth_header[7:]
+
+        if request.url.path.startswith("/admin/"):
+            expected = os.environ.get("SIGIL_ADMIN_TOKEN", "")
+            if not hmac.compare_digest(raw_key, expected):
+                return Response(
+                    content='{"detail":"Invalid admin token"}',
+                    status_code=401,
+                    media_type="application/json",
+                )
+            return await call_next(request)
+
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         engine: AsyncEngine = request.app.state.engine
 
@@ -220,17 +232,79 @@ def _register_routes(app: FastAPI) -> None:
                     "INSERT INTO api_keys (key_type, key_hash, key_prefix, allowed_origins) "
                     "VALUES (:kt, :kh, :kp, :ao)"
                 ),
-                {"kt": "publishable", "kh": pk_hash, "kp": "pk_live_", "ao": origins_json},
+                {"kt": "publishable", "kh": pk_hash, "kp": pk_raw[:14], "ao": origins_json},
             )
             await conn.execute(
                 text(
                     "INSERT INTO api_keys (key_type, key_hash, key_prefix, allowed_origins) "
                     "VALUES (:kt, :kh, :kp, :ao)"
                 ),
-                {"kt": "secret", "kh": sk_hash, "kp": "sk_live_", "ao": origins_json},
+                {"kt": "secret", "kh": sk_hash, "kp": sk_raw[:14], "ao": origins_json},
             )
 
         return CreateApiKeyResponse(publishableKey=pk_raw, secretKey=sk_raw)
+
+    @app.get("/admin/api-keys")
+    async def list_api_keys(request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT key_prefix, key_type, allowed_origins, created_at, revoked_at "
+                    "FROM api_keys ORDER BY created_at DESC"
+                )
+            )
+            rows = result.fetchall()
+
+        return [
+            {
+                "keyPrefix": row[0],
+                "keyType": row[1],
+                "allowedOrigins": json.loads(row[2]) if row[2] else [],
+                "createdAt": str(row[3]),
+                "revokedAt": str(row[4]) if row[4] else None,
+            }
+            for row in rows
+        ]
+
+    @app.delete("/admin/api-keys/{key_prefix}")
+    async def revoke_api_key(key_prefix: str, request: Request):
+        engine: AsyncEngine = request.app.state.engine
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text("SELECT key_prefix, revoked_at FROM api_keys WHERE key_prefix = :kp"),
+                {"kp": key_prefix},
+            )
+            existing = row.first()
+            if existing is None:
+                return Response(
+                    content='{"detail":"API key not found"}',
+                    status_code=404,
+                    media_type="application/json",
+                )
+
+            now = datetime.now(timezone.utc).isoformat()
+            await conn.execute(
+                text("UPDATE api_keys SET revoked_at = :now WHERE key_prefix = :kp"),
+                {"kp": key_prefix, "now": now},
+            )
+
+            result = await conn.execute(
+                text(
+                    "SELECT key_prefix, key_type, allowed_origins, created_at, revoked_at "
+                    "FROM api_keys WHERE key_prefix = :kp"
+                ),
+                {"kp": key_prefix},
+            )
+            updated = result.first()
+
+        return {
+            "keyPrefix": updated[0],
+            "keyType": updated[1],
+            "allowedOrigins": json.loads(updated[2]) if updated[2] else [],
+            "createdAt": str(updated[3]),
+            "revokedAt": str(updated[4]),
+        }
 
     @app.post("/identify")
     async def identify(body: IdentifyRequest, request: Request):
