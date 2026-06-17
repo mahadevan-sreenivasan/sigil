@@ -12,6 +12,8 @@ from sigil_server.db import run_migrations
 from sigil_server.geolocation import GeoResult
 from sigil_server.main import _rate_limit_buckets
 
+ADMIN_TOKEN = "test-admin-token-that-is-long-enough-for-validation"
+
 MOCK_GEO_DB: dict[str, GeoResult] = {
     "1.2.3.4": GeoResult(country="IN", city="Mumbai", latitude=19.0760, longitude=72.8777),
     "5.6.7.8": GeoResult(country="GB", city="London", latitude=51.5074, longitude=-0.1278),
@@ -70,6 +72,11 @@ def _clear_rate_limits():
     _rate_limit_buckets.clear()
 
 
+@pytest.fixture(autouse=True)
+def _set_admin_token(monkeypatch):
+    monkeypatch.setenv("SIGIL_ADMIN_TOKEN", ADMIN_TOKEN)
+
+
 @pytest.fixture
 async def client(engine):
     from sigil_server.main import create_app
@@ -126,9 +133,11 @@ async def keyless_client(engine, monkeypatch):
 @pytest.fixture
 async def api_keys(client):
     """Create a key pair and return (publishable_key, secret_key)."""
-    resp = await client.post("/admin/api-keys", json={
-        "allowedOrigins": ["https://test.com"],
-    })
+    resp = await client.post(
+        "/admin/api-keys",
+        json={"allowedOrigins": ["https://test.com"]},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+    )
     data = resp.json()
     return data["publishableKey"], data["secretKey"]
 

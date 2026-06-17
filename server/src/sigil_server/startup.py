@@ -29,6 +29,21 @@ def build_geo_resolver() -> IpApiProGeoResolver | None:
     """Create an ip-api resolver from environment, or return None (fail-open)."""
     api_key = os.environ.get("IP_API_PRO_KEY")
     if not api_key:
+    admin_token = os.environ.get("SIGIL_ADMIN_TOKEN")
+    if not admin_token:
+        raise RuntimeError(
+            "SIGIL_ADMIN_TOKEN environment variable is required but not set. "
+            "Generate one with: openssl rand -base64 32  or  "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+
+    if len(admin_token) < 32:
+        raise RuntimeError(
+            f"SIGIL_ADMIN_TOKEN must be at least 32 characters (got {len(admin_token)}). "
+            "Generate one with: openssl rand -base64 32  or  "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+
         logger.warning(
             "IP_API_PRO_KEY is not set. Geolocation enrichment will be unavailable."
         )
