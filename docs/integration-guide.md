@@ -51,13 +51,13 @@ docker run -d \
   --name sigil-server \
   -p 8080:8080 \
   -e DATABASE_URL=postgresql://user:pass@host:5432/sigil \
-  -e MAXMIND_DB_PATH=/data/GeoLite2-City.mmdb \
+  -e IP_API_PRO_KEY=your-ip-api-pro-key \
   sigil-server:latest
 ```
 
 The server requires:
 - A PostgreSQL database (14+)
-- A MaxMind GeoLite2-City database file (download from https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)
+- An ip-api Pro key for geolocation enrichment (https://ip-api.com)
 
 ### 2. Generate API Keys
 
@@ -621,7 +621,7 @@ The Identification Server is configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | — | PostgreSQL connection string (required) |
-| `MAXMIND_DB_PATH` | — | Path to GeoLite2-City.mmdb file (required) |
+| `IP_API_PRO_KEY` | — | API key for `pro.ip-api.com` geolocation lookups (optional, enables geolocation enrichment) |
 | `SIGIL_RATE_LIMIT_RPS` | `20` | Max requests/second per publishable key |
 | `SIGIL_RETENTION_DAYS` | `180` | Days to retain signal sets and geolocation history |
 | `SIGIL_SIMILARITY_THRESHOLD` | `0.4` | Minimum similarity score to include in results |

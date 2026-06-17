@@ -72,7 +72,7 @@ Add a **Playground**: a browser-based developer harness packaged as a new monore
 
 30. As a Sigil developer, I want to see velocity counts in the response display, so that I can verify rate-based detection fields.
 
-31. As a Sigil developer, I want to see geolocation and Impossible Travel fields in the response display, so that I can verify Server-Captured Signal and geo anomaly behavior when MaxMind is configured.
+31. As a Sigil developer, I want to see geolocation and Impossible Travel fields in the response display, so that I can verify Server-Captured Signal and geo anomaly behavior when ip-api is configured.
 
 32. As a Sigil developer, I want the Playground excluded from production deployment artifacts, so that it remains a local development tool only.
 

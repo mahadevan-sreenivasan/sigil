@@ -3,11 +3,13 @@
   "private": true,
   "workspaces": [
     "collector",
-    "dashboard"
+    "dashboard",
+    "playground"
   ],
   "scripts": {
     "build:collector": "npm run build -w collector",
     "build:dashboard": "npm run build -w dashboard",
+    "dev:playground": "npm run dev -w playground",
     "test:collector": "npm test -w collector",
     "build": "npm run build:collector && npm run build:dashboard",
     "test:dashboard": "npm test -w dashboard",

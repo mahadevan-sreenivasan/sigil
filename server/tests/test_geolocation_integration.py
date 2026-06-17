@@ -47,6 +47,76 @@ async def test_identify_stores_geolocation_and_returns_it(client, engine, sk_aut
     assert geo_row[2] == "Mumbai"
 
 
+async def test_identify_uses_provider_wired_resolver_when_configured(
+    provider_client, engine, sk_auth_headers,
+):
+    resp = await provider_client.post(
+        "/identify",
+        json={"signals": {"canvas": "geo_provider"}},
+        headers={**sk_auth_headers, "X-Forwarded-For": "8.8.8.8"},
+    )
+    data = resp.json()
+
+    assert data["geolocation"]["ip"] == "8.8.8.8"
+    assert data["geolocation"]["country"] == "US"
+    assert data["geolocation"]["city"] == "Mountain View"
+    assert data["geolocation"]["latitude"] == pytest.approx(37.4056, abs=0.01)
+    assert data["geolocation"]["longitude"] == pytest.approx(-122.0775, abs=0.01)
+
+    async with engine.connect() as conn:
+        row = await conn.execute(
+            text("SELECT ip_address, country, city FROM geolocation_history LIMIT 1")
+        )
+        geo_row = row.first()
+    assert geo_row is not None
+    assert geo_row[0] == "8.8.8.8"
+    assert geo_row[1] == "US"
+    assert geo_row[2] == "Mountain View"
+
+
+async def test_identify_fail_open_when_provider_returns_non_success_payload(
+    provider_client, sk_auth_headers,
+):
+    resp = await provider_client.post(
+        "/identify",
+        json={"signals": {"canvas": "geo_fail_payload"}},
+        headers={**sk_auth_headers, "X-Forwarded-For": "203.0.113.10"},
+    )
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["geolocation"]["ip"] == "203.0.113.10"
+    assert data["geolocation"]["country"] is None
+    assert data["geolocation"]["city"] is None
+    assert data["geolocation"]["latitude"] is None
+    assert data["geolocation"]["longitude"] is None
+    assert data["serverReachable"] is True
+    assert data["isNewVisitor"] is True
+    assert data["signalValidation"] == "new"
+    assert data["fingerprintId"].startswith("fp_")
+
+
+async def test_identify_succeeds_with_ip_only_geolocation_when_key_missing(
+    keyless_client, sk_auth_headers,
+):
+    resp = await keyless_client.post(
+        "/identify",
+        json={"signals": {"canvas": "geo_no_key"}},
+        headers={**sk_auth_headers, "X-Forwarded-For": "198.51.100.8"},
+    )
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["geolocation"]["ip"] == "198.51.100.8"
+    assert data["geolocation"]["country"] is None
+    assert data["geolocation"]["city"] is None
+    assert data["geolocation"]["latitude"] is None
+    assert data["geolocation"]["longitude"] is None
+    assert data["serverReachable"] is True
+    assert data["velocity"]["visitorRequestsLast10Min"] == 1
+    assert data["velocity"]["ipDistinctAccountsLast1Hr"] == 0
+
+
 async def test_impossible_travel_detected(client, engine, sk_auth_headers):
     """Two requests from Mumbai and London within seconds → impossible travel detected."""
     await client.post(
