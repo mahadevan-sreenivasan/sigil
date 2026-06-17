@@ -67,3 +67,7 @@ _Avoid_: Admin panel, console, portal
 **Velocity**:
 The rate of identification requests for a given entity (visitor, account, or IP) within a time window. High velocity is a strong indicator of automated attacks such as card testing or credential stuffing.
 _Avoid_: Rate, frequency, throughput
+
+**Playground**:
+A browser-based developer harness for exercising the Collector and Identification Server during local development. Displays raw signals and full identification results, with controls to trigger edge-case scenarios. Not for production fraud investigation — that is the Dashboard's job.
+_Avoid_: Demo app, sandbox, test UI
