@@ -17,10 +17,9 @@ A self-hosted browser fingerprint SDK for e-commerce fraud detection. Collects d
 The fastest way to run a complete Sigil instance locally:
 
 ```bash
-# 1. Obtain the MaxMind GeoLite2-City database (free, requires registration):
-#    https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
-#    Place the .mmdb file at: data/GeoLite2-City.mmdb
-mkdir -p data
+# 1. Set your ip-api Pro key for geolocation enrichment:
+#    https://ip-api.com/docs/api:json
+export IP_API_PRO_KEY=your-ip-api-pro-key
 
 # 2. Start the server and PostgreSQL
 docker compose up -d
@@ -37,19 +36,19 @@ The server will be available at `http://localhost:8080`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql://sigil:sigil@postgres:5432/sigil` | PostgreSQL connection string (required) |
-| `MAXMIND_DB_PATH` | `/data/GeoLite2-City.mmdb` | Path to MaxMind GeoLite2-City database |
+| `IP_API_PRO_KEY` | — | API key for `pro.ip-api.com` geolocation lookups |
 | `SIGIL_CONFIG_PATH` | `sigil-config.yaml` | Path to signal weights config file |
 | `SIGIL_RATE_LIMIT_RPS` | `20` | Requests per second per API key |
 
-#### MaxMind GeoLite2-City Database
+#### Geolocation Provider Setup
 
-The geolocation feature requires a MaxMind GeoLite2-City database file:
+Sigil resolves geolocation via `pro.ip-api.com` when `IP_API_PRO_KEY` is configured.
 
-1. Create a free account at https://www.maxmind.com/en/geolite2/signup
-2. Download the GeoLite2-City database (`.mmdb` format)
-3. Place the file at `data/GeoLite2-City.mmdb` in the repo root
+1. Provision an ip-api Pro key from https://ip-api.com
+2. Set `IP_API_PRO_KEY` in your runtime environment (or `.env`)
+3. Restart the server if you updated environment variables
 
-> **Note:** The server starts without this file (a warning is logged), but geolocation features will be unavailable.
+> **Note:** The server starts without `IP_API_PRO_KEY` (a warning is logged), but geolocation enrichment will be unavailable.
 
 ### Collector
 

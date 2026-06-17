@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from .geolocation import IpApiProGeoResolver
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +24,11 @@ def validate_env() -> None:
             "Example: postgresql://user:pass@localhost:5432/sigil"
         )
 
+
+def build_geo_resolver() -> IpApiProGeoResolver | None:
+    """Create an ip-api resolver from environment, or return None (fail-open)."""
+    api_key = os.environ.get("IP_API_PRO_KEY")
+    if not api_key:
     admin_token = os.environ.get("SIGIL_ADMIN_TOKEN")
     if not admin_token:
         raise RuntimeError(
@@ -37,11 +44,11 @@ def validate_env() -> None:
             'python -c "import secrets; print(secrets.token_urlsafe(32))"'
         )
 
-    maxmind_path = os.environ.get("MAXMIND_DB_PATH")
-    if not maxmind_path:
         logger.warning(
-            "MAXMIND_DB_PATH is not set. Geolocation features will be unavailable."
+            "IP_API_PRO_KEY is not set. Geolocation enrichment will be unavailable."
         )
+        return None
+    return IpApiProGeoResolver(api_key=api_key)
 
 
 def validate_config(config_path: str) -> None:

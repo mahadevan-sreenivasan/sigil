@@ -90,6 +90,41 @@ describe('SigilCollector.identify', () => {
     expect(result.serverReachable).toBe(true);
   });
 
+  it('parses accountHistory from identify response', async () => {
+    const serverResponse = {
+      visitorId: 'vis_history_1',
+      isNewVisitor: false,
+      fingerprintId: 'fp_history_1',
+      signalValidation: 'match',
+      accountHistory: {
+        accountId: 'acct_42',
+        firstSeenAt: '2026-06-10T10:00:00Z',
+        lastSeenAt: '2026-06-17T11:30:00Z',
+        seenCount: 8,
+      },
+    };
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(serverResponse),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    const result = await collector.identify();
+
+    expect(result.accountHistory).toEqual({
+      accountId: 'acct_42',
+      firstSeenAt: '2026-06-10T10:00:00Z',
+      lastSeenAt: '2026-06-17T11:30:00Z',
+      seenCount: 8,
+    });
+  });
+
   it('includes accountId in request body when provided', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -263,5 +298,33 @@ describe('SigilCollector.identify', () => {
 
     expect(result.isNewVisitor).toBeNull();
     expect(result.signalValidation).toBeNull();
+  });
+
+  it('collectSignals returns local signals without calling fetch', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const collector = new SigilCollector({
+      apiKey: 'pk_live_test',
+      serverUrl: 'https://fp.example.com',
+    });
+
+    const signals = await collector.collectSignals();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(signals.canvas).toBe('abc123canvas');
+    expect(signals.webglRenderer).toBe('ANGLE (NVIDIA GeForce GTX 1080)');
+    expect(signals.webglVendor).toBe('Google Inc. (NVIDIA)');
+    expect(signals.audioHash).toBe('audio_hash_abc');
+    expect(signals.fonts).toBe('font_hash_def');
+    expect(signals.screenResolution).toBe('1920x1080');
+    expect(signals.colorDepth).toBe(24);
+    expect(signals.platform).toBe('Win32');
+    expect(signals.hardwareConcurrency).toBe(8);
+    expect(signals.deviceMemory).toBe(16);
+    expect(signals.touchSupport).toBe(false);
+    expect(signals.maxTouchPoints).toBe(0);
+    expect(signals.timezone).toBe('Asia/Kolkata');
+    expect(signals.userAgent).toBe('Mozilla/5.0 Test');
   });
 });

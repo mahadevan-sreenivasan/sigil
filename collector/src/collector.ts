@@ -35,8 +35,11 @@ export interface IdentificationResult {
   velocity: Record<string, unknown> | null;
   geolocation: Record<string, unknown> | null;
   impossibleTravel: Record<string, unknown> | null;
+  accountHistory: Record<string, unknown> | null;
   signals: Record<string, unknown> | null;
 }
+
+export type CollectedSignals = Record<string, unknown>;
 
 const DEFAULT_TIMEOUT = 5000;
 
@@ -51,31 +54,12 @@ export class SigilCollector {
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
   }
 
+  async collectSignals(): Promise<CollectedSignals> {
+    return this._collectSignals();
+  }
+
   async identify(options?: IdentifyOptions): Promise<IdentificationResult> {
-    const [canvas, webgl, audioHash, fonts] = await Promise.all([
-      collectCanvasHash(),
-      Promise.resolve(collectWebGL()),
-      collectAudioHash(),
-      collectFontHash(),
-    ]);
-
-    const signals: Record<string, unknown> = {
-      canvas,
-      webglRenderer: webgl?.renderer ?? null,
-      webglVendor: webgl?.vendor ?? null,
-      audioHash,
-      fonts,
-      screenResolution: collectScreenResolution(),
-      colorDepth: collectColorDepth(),
-      platform: collectPlatform(),
-      hardwareConcurrency: collectHardwareConcurrency(),
-      deviceMemory: collectDeviceMemory(),
-      touchSupport: collectTouchSupport(),
-      maxTouchPoints: collectMaxTouchPoints(),
-      timezone: collectTimezone(),
-      userAgent: collectUserAgent(),
-    };
-
+    const signals = await this.collectSignals();
     const body: Record<string, unknown> = { signals };
     if (options?.visitorId) {
       body.visitorId = options.visitorId;
@@ -113,6 +97,7 @@ export class SigilCollector {
         velocity: data.velocity ?? null,
         geolocation: data.geolocation ?? null,
         impossibleTravel: data.impossibleTravel ?? null,
+        accountHistory: data.accountHistory ?? null,
         signals,
       };
     } catch {
@@ -122,7 +107,35 @@ export class SigilCollector {
     }
   }
 
-  private _degradedResult(signals: Record<string, unknown>): IdentificationResult {
+  private async _collectSignals(): Promise<CollectedSignals> {
+    const [canvas, webgl, audioHash, fonts] = await Promise.all([
+      collectCanvasHash(),
+      Promise.resolve(collectWebGL()),
+      collectAudioHash(),
+      collectFontHash(),
+    ]);
+
+    const signals: Record<string, unknown> = {
+      canvas,
+      webglRenderer: webgl?.renderer ?? null,
+      webglVendor: webgl?.vendor ?? null,
+      audioHash,
+      fonts,
+      screenResolution: collectScreenResolution(),
+      colorDepth: collectColorDepth(),
+      platform: collectPlatform(),
+      hardwareConcurrency: collectHardwareConcurrency(),
+      deviceMemory: collectDeviceMemory(),
+      touchSupport: collectTouchSupport(),
+      maxTouchPoints: collectMaxTouchPoints(),
+      timezone: collectTimezone(),
+      userAgent: collectUserAgent(),
+    };
+
+    return signals;
+  }
+
+  private _degradedResult(signals: CollectedSignals): IdentificationResult {
     return {
       visitorId: null,
       fingerprintId: null,
@@ -133,6 +146,7 @@ export class SigilCollector {
       velocity: null,
       geolocation: null,
       impossibleTravel: null,
+      accountHistory: null,
       signals,
     };
   }

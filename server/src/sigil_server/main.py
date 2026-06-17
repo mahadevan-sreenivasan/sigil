@@ -36,7 +36,7 @@ from .models import (
     Velocity,
 )
 from .scoring import DEFAULT_WEIGHTS, find_similar_visitors
-from .startup import load_weights, validate_config, validate_env
+from .startup import build_geo_resolver, load_weights, validate_config, validate_env
 
 TOP_STABLE_SIGNALS = ("canvas", "webglRenderer", "audioHash", "fonts")
 INDEXED_SIGNAL_MAP = {
@@ -95,6 +95,9 @@ def create_app(engine: AsyncEngine | None = None) -> FastAPI:
         app.state.engine = engine
         custom_weights = load_weights(config_path)
         app.state.scoring_weights = custom_weights if custom_weights else DEFAULT_WEIGHTS
+        geo_resolver = build_geo_resolver()
+        if geo_resolver is not None:
+            app.state.geo_resolver = geo_resolver
         yield
         if owns_engine and engine is not None:
             await engine.dispose()
